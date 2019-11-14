@@ -1,0 +1,296 @@
+1.把springcloud实现dubbo的生产者和消费者调用
+2.预习eureka，明天我会不定时点名提问，如果没有回答上来抄5遍
+
+20191109-homework:
+    1.把今天的eureka整明白(把项目完善)
+    2.直接想办法集成eureka的集群版
+    3.预习ribbon(负载均衡)
+        ribbon依赖eureka实现负载均衡
+        ribbon不依赖eureka实现负载均衡
+        ribbon的负载均衡算法源码(我要自己写)(github上直接搜ribbon-->loadbalance包下(轮询，随机))
+
+
+ribbon的源码分析:
+    IRule:接口
+        public Server choose(Object key);选择可用的服务
+    ILoadBalancer:接口(和标记，添加，选择，获取服务相关的接口)
+    AbstractLoadBalancer(抽象类) ---> 实现了ILoadBalancer接口
+    AbstractLoadBalancerRule(抽象类) ---> 实现了IRule接口
+        有一个属性:ILoadBalance-->getter/setter方法
+    RandomRule(最终实现负载均衡算法地方) ---> 继承了AbstractLoadBalancerRule抽象类
+
+
+Feign:
+    负载均衡(客户端层面的负载均衡)
+    !!!ribbon和feign的区别:
+       在真实的开发环境中只会使用到feign，并不会使用ribbon，其实feign中负载均衡的实现是基于ribbon的，也就是说feign集成的有ribbon
+       feign其实真正的功能并不只局限于负载均衡，feign有一个非常强大的功能是远程调用，feign中负载均衡实现是ribbon做的
+       ribbon是如何实现consumer调用provider？
+            RestTemplate--->@LoadBalance(开启负载均衡)--->如果不使用默认的轮询算法则还需要自己自定义算法--->在controller中
+            通过restTemplate来模拟http的请求--->最后把请求发送给provider(controller调用controller)
+            其实违反了MVC的规则
+       MVC:controller--->调用service--->调用mapper--->使用model
+       feign实现:
+            consumer:
+                controller--->service层(接口)--->映射provider中的controller
+            provider:
+                controller-->调用service-->调用mapper
+
+
+当使用feign做负载均衡的时候:
+    consumer:
+        和客户端打交道,也就是说只提供页面的展示，所有的数据支撑都来源于provider(没有必须要数据源)
+        不需要配置数据源但是mybatis的jar，直接报错，也就是必须要配
+    provider:
+        和数据库打交道，也就是说只做数据持久层，所有的页面都是consumer决定，只提供数据支持
+    consumer中的controller-->service接口(service项目中)
+        -->consumer必须要依赖于service层-->依赖于mapper
+        也就是说consumer必须要配数据源(没有意义)
+    consumer就不会使用service,再创建一个项目(只做service的接口(API))
+    consumer只需要依赖api项目，因为api中有返回值类型，所以必须要依赖于model
+    因为使用的是feign，所以按照规定必须要添加feign的jar包，所以一般会把jar包添加到api项目中
+
+    除了consul之外，springcloud的所有组件都必须要eureka，因为consul也是注册中心
+    是否需要eureka的jar包？
+        必须要有
+
+!!!!!!!!hystrix:(非常非常重要，100%不能保证项目中不出错，就必须要针对错误实现解决方案)
+    断容器
+    断容器其实类似于保险丝，当家里的电器短路，保险丝就会烧断，整个电路跳闸，保护了整个电路安全
+    断容器是每个项目中都必须有的，假设突然有一个服务器宕机，其他的consumer就无法调用这个宕机的服务，这些consumer就会一直处于等待状态(直到连接超时)
+    consumer一旦出现连接超时，反馈客户端就会出现异常信息，断容器就会生效
+
+    服务的扇出
+        有一个服务A
+            A需要分别调用B和C以及D，当A成功获取到BCD的值之后才算服务A成功调用(只要其中有一个服务没有获取到则调用失败)，
+            但是B调用E，C调用F和G，D调用H,I,J，这种调用模式就称之为扇出
+
+    雪崩效应
+        在正常的服务扇出的情况下，突然有一条线断了，其他的所有线路都在等待这一条线(直到连接超时)，在还没有出现连接超时的时候突然来了10万的并发
+        最终全部挤压在断的那一条线路上，该线路直接宕机，直接会导致A宕机，A一旦宕机整个集群都处于瘫痪状态，这种叫做服务的雪崩效应
+
+    什么是容错:
+        当项目出现异常的时候，仍然可以正常的运行，并且客户端可以获取到一个能接受的结果就叫做项目的容错(try/catch)
+
+    hytrix:(面试题)
+        五大核心：
+          1.熔断
+            当服务器调用的时候出现故障，项目就会出现严重的异常(500)，熔断就是解决了这个问题，调用后备方法，返回客户端可以接受的结果
+          2.服务的降级
+            当服务器的压力过大的时候，为了支撑核心业务的正常运行，先把无关紧要的服务停止，让服务器的所有资源供核心业务使用，当核心业务性能逐步稳定之后，再重新其他额服务，这种模式就称之为服务的降级
+          3.服务的隔离(自己百度服务的隔离)
+                线程池隔离
+                信号量隔离
+                当服务长时间不响应，就会连接超时，服务的隔离就是解决连接超时的问题
+
+          4.服务的限流(决绝高并发)
+                当服务器压力过大的时候，也就是说负载比较高的时候，就不能再继续支撑客户端的访问，假设还有100个请求服务器就会宕机
+                规定只能再接收20个，其他的80个请求全部走熔断
+
+          5.灰色发布(灰色部署)
+            自己百度吧
+
+    普通熔断的弊端:
+        1.如果controller中的方法过多，每一个方法就必须对应一个熔断方法,如果controller过多，则整个项目就会过大(启动的时候编译的方法就会变多，并且运行的速度就会降低)
+        2.你觉得在consumer调用provider的时候，只会在provider抛异常么？
+            consumer的controller调用service接口的时候抛异常
+            service接口调用provider的controller也可能抛异常
+            把熔断的处理放在service层解决，也可以对每一个熔断方法进行封装
+
+
+路由网关(zuul):
+    路由
+    过滤
+    zuul只适用于springcloud1.x版本，在springcloud2.x版本之后，路由被gateway代替了，也就是说现在官方明确指出zuul不再维护
+    gateway(lamda表达式，断言)
+
+路由网关(gateway):
+    是springcloud2.x版本的新产生路由，替代了zuul
+    gateway和zuul的区别是什么？
+        所实现的功能没有任何的区别，区别在于底层设计
+        gateway所使用的是netty(IO-->NIO)，针对于NIO做的多线程的封装，netty中的异步IO
+        zuul使用的是原始的servlet3
+        如果是低并发的情况下，gateway和zuul没有任何区别(速度，效率)，但是一旦涉及到高并发的时候，gateway要比zuul至少10倍，差距非常明显
+        就是要研究gateway和zuul的本质区别，异步IO和多线程阻塞区别
+    创建gateway的项目，并且添加jar包，一定不要添加web-starter的包，如果添加了就直接造成jar包冲突
+        因为gateway使用的并不是传统的servlet容易，所以不能使用tomcat驱动，运行速度绝对会比tomcat快很多
+        springbot官网明确指出默认的软件服务器undertow，并不是tomcat，undertow官方给出的数据比tomcat的速度要快至少100倍
+
+                常用的路由规则:
+                        AddRequestHeader:添加request的请求头
+            			AddRequestParameter:修改request的请求参数
+            			localhost:5082/userOne?id=1-->5
+            			localhost:5082/userOne?id=1&name=zhangsan
+            			AddResponseHeader:添加response的响应头
+            			RewritePath:(重写路径)
+            				zuul-->访问localhost:5081/user-provider/userAll
+            					-->user-provider-->provider-->localhost:5081/provider/userAll
+            				gateway:
+            					user-provider/userAll--->userAll
+            					localhost:5082/userAll-->映射的是localhost:5082/user-provider/userAll
+            		        localhost:5082/all-->@RequestMapping("/all")
+            		        --->localhost:5082/allBooks-->localhost:5082/all
+            			PrefixPath:
+            				zuul-->添加前缀
+            				gateway:
+            					真实访问路径为localhost:5082/user-provider/userAll-->添加前缀-->localhost:5082/seven/user-provider/userAll
+            			StripPrefix:
+            				zuul不支持该功能
+            				gateway:
+            					访问路径规则:
+            						localhost:5082/aaa/seven/test/user-provider/userAll(localhost:5082/user-provider/userAll)
+            						StripPrefix = 3
+            						localhost:5082/user-provider/userAll
+            				自定义路由过滤器
+            				自定义路由过滤器工厂
+        gateway可以不了解，但是不能不知道，因为市面90%的公司使用的还是zuul
+
+20191113_homework:
+    1.把今天的代码写一遍
+    2.自己百度lamda表达式(必须要知道lamda是什么，怎么用)
+    3.自己百度springcloud的分布式配置中心(不要看1.x，1.x和2.x跟换组件一样)
+
+
+分布式配置中心:
+    当微服务越来越多的时候，properties配置文件也会随之增多，这样非常不便于维护和管理，而且有非常多的冗余配置
+    config就是把各个具体的微服务不再有自己的配置，统一由config项目进行管理properties文件
+
+    需求:
+        在不同的环境中加载不同的配置文件:
+            dev--->开发环境加载dev配置文件
+            test---->测试环境加载test配置文件
+            pro---->生产环境加载pro配置文件
+            并且根据配置文件不同，使用的数据库也不一样
+            并且根据不同的环境，使用的端口号也不一样(正式环境:80, 开发环境:8081, 测试环境:8082)
+
+       1.创建github账号
+       2.在github上面创建repository(仓库)
+            --->一个github账号可以有很多个仓库--->一个仓库只能对应一个项目--->所以仓库的名称就是所要提交的项目名
+            如果是一个新的账号，就必须先有一个命名空间(也是自己创建的，可以随意起名)
+       3.使用github desktop把项目加载到本地
+            3.1.选择File-->clone repository-->选择需要加载到本地的项目
+       4.创建三个文件
+            application-dev.properties
+                spring.profiles=dev
+                spring.application.name=application-dev
+
+                spring.datasource.driver-class-name=com.mysql.jdbc.Driver
+                spring.datasource.url=jdbc:mysql://localhost:3306/dev?useSSL=false
+                spring.datasource.username=root
+                spring.datasource.password=root
+                spring.datasource.type=com.alibaba.druid.pool.DruidDataSource
+
+
+            application-test.properties
+                spring.profiles=test
+                spring.application.name=application-test
+
+                spring.datasource.driver-class-name=com.mysql.jdbc.Driver
+                spring.datasource.url=jdbc:mysql://localhost:3306/test?useSSL=false
+                spring.datasource.username=root
+                spring.datasource.password=root
+                spring.datasource.type=com.alibaba.druid.pool.DruidDataSource
+
+            application-pro.properties
+                spring.profiles=pro
+                spring.application.name=application-pro
+
+                spring.datasource.driver-class-name=com.mysql.jdbc.Driver
+                spring.datasource.url=jdbc:mysql://localhost:3306/pro?useSSL=false
+                spring.datasource.username=root
+                spring.datasource.password=root
+                spring.datasource.type=com.alibaba.druid.pool.DruidDataSource
+
+       5.把配置好的三个文件提交到github上
+            当使用github desktop提交代码到github上的时候，只能一个一个的提交，不能一起提交
+            选择commit to master(记住这个master)
+            选择repository选择-->push
+
+       6.分布式配置中心的访问规则:
+            无论是yml还是properties都可以使用该规则进行访问:
+                /{application}/{profile}[/{label}]
+            properties:
+                /{application}-{profile}.properties
+                /{label(分支)}/{application}-{profile}.properties
+            yml:
+                /{application}-{profile}.yml
+                /{label}/{application}-{profile}.yml
+
+            label:在github中默认是master(分支)
+                -->命名空间，把不同的仓库放在不同的命名空间中
+                分支有两种:
+                    第一种先有分支:
+                        分支:order
+                            在该分支下创建的所有仓库(每一个仓库就是一个项目)都和订单有关
+                    第二种先有仓库，再进行分支(因为项目非常大(微服务)，会根据服务的种类创建不同的分支)
+                springcloud项目:
+                    -->eureka是一个分支(label)
+                    eureka三个
+                    -->provider也是一个分支
+                    provider三个
+                    -->consumer还是一个分支
+                    consumer三个
+                    zuul一个
+
+        7.在配置client端的时候，为什么要有两个配置文件？
+            bootstrap.properties
+            application.properties
+            查漏补缺：
+                就算是负载均衡的时候，所有的配置文件也有差异
+                8081
+                8082
+                8083
+                负载均衡的项目，在配置的时候也有差异
+                把所有一样的配置放在github上，那这些有差异的配置需要定义在application.properties文件中
+           7.1.两个配置文件的加载顺序是什么？
+                bootstrap.properties
+                application.properties
+                先加载bootstrap.properties，再加载application.properties
+                为什么？
+                    其实最终bootstrap.properties加载后的数据和application.properties文件整合了
+                    --->application.properties
+                    bootstrap.properties只是从github上把配置给加载回来
+                    项目其实最终还是加载application.properties，也就是说这两个配置文件要合并
+                当bootstrap.properties和application.properties配置一样的时候，先加载谁就会覆盖另一个
+                也就是说bootstrap.properties中的配置会覆盖application.properties中的配置
+
+           7.2.如何把本地上传到github上面(通过IDEA)
+                在上传的时候只上传src和pom.xml，其他的东西都不要上传
+                并且上传的必须要添加注释
+                7.2.1创建repository仓库，并且获取HTTPS的地址
+                    https://github.com/maleLee/20191108-springcloud.git
+                7.2.2.把tool bar设置到IDEA的左侧
+                    选择view菜单--->Appearance--->勾选tool bar选项(默认是没有勾选的)
+                7.2.3.把项目提交到github上(在提交github之前必须先安装git)
+                    下载git(默认下一步即可)--->选择Settings--->搜索git(选择git的安装目录(找到bin目录git.exe))
+                    在tool bar的空白处点击右键--->选择customize Menus and Toolbars-->找到Main toolbar
+                    -->找到mainToolbarSettings--->选择VCSActions--->选择commit-->点击"+"-->选择Add action
+                    --->选择Main Menu-->选择VCS-->选择Git--->找到push-->点击OK
+                7.2.4.真正的提交
+                    选择VCS-->Import Into version control-->选择create git repository--->直接选择项目的地址即可
+                    -->选择commit--->点击push-->选择define remote-->需要添加url(就是github上仓库的地址)--->点击push即可
+                    (如果是第一次push需要输入github账号和密码)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
