@@ -270,6 +270,7 @@ Feign:
                     选择VCS-->Import Into version control-->选择create git repository--->直接选择项目的地址即可
                     -->选择commit--->点击push-->选择define remote-->需要添加url(就是github上仓库的地址)--->点击push即可
                     (如果是第一次push需要输入github账号和密码)
+                    测试互通！！！
 
 
 
